@@ -26,4 +26,4 @@ def store_function(query, response):
     file_path = "cave/posts.json" # previous posts information
     raise NotImplementedError
 
-def search_function
+# def search_function
