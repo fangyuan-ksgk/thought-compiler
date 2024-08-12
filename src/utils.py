@@ -104,15 +104,41 @@ def get_pdf_contents(pdf_file, first_page=1, last_page=1):
 
 
 from typing import TypedDict, List
+import random
+from typing import Annotated, Literal, List
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
 
 class Paper(TypedDict):
     title: str
     summary: str
     post: str
-    evaluation: str
+    comment: str
+    score: int
+    argument: str # Argument needs to be approved by a human
     
 def add_papers(left: List[Paper], right: List[Paper]) -> List[Paper]:
-    return left + right 
+    # When there are duplicate titles, we merge, otherwise we concatenate
+    merged = {paper['title']: paper for paper in left}
+    for paper in right:
+        if paper['title'] in merged:
+            # Merge the papers with the same title
+            merged[paper['title']] = Paper(
+                title=paper['title'],
+                summary=paper['summary'] if paper['summary'] else merged[paper['title']]['summary'],
+                post=paper['post'] if paper['post'] else merged[paper['title']]['post'],
+                comment=merged[paper['title']]['comment'] if merged[paper['title']]['comment'] else paper['comment'],
+                score=(merged[paper['title']]['score'] + paper['score']) / 2 if merged[paper['title']]['score'] != 0 and paper['score'] != 0 else max(merged[paper['title']]['score'], paper['score']),
+                argument=merged[paper['title']]['argument'] if merged[paper['title']]['argument'] else paper['argument']
+            )
+        else:
+            merged[paper['title']] = paper
+    return list(merged.values())
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    papers: Annotated[list, add_papers]
     
 def initialize_papers(papers: list) -> list[Paper]:
     paper_list = []
@@ -153,38 +179,59 @@ def papers_to_string(papers: List[Paper]) -> str:
     return "\n\n".join([paper_to_string(paper) for paper in papers])
 
 
-def parse_paper_response(content: str) -> List[Paper]:
-    # Extract content inside square brackets
+import ast 
+
+def load_json_with_ast(json_str):
+    json_str_cleaned = json_str.strip()
+    papers = ast.literal_eval(json_str_cleaned)
+    return papers
+
+
+def parse_json_response(content):
     match = re.search(r'\[(.*?)\]', content, re.DOTALL)
-    if not match:
-        print("Error: No JSON array found in square brackets")
+    json_content = match.group(1)
+
+    json_str = f"[{json_content}]"
+
+    try: 
+        json_data = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        try:
+            json_data = load_json_with_ast(json_str)
+        except:
+            return []
+    return json_data
+
+
+def parse_paper_response(content: str) -> List[Paper]:
+    # Remove leading/trailing whitespace
+    content = content.strip()
+    
+    paper_data = parse_json_response(content)
+    
+    if not paper_data:
         return []
     
-    json_content = match.group(1)
+    # Create a list to store Paper objects
+    parsed_papers = []
     
-    try:
-        # Parse the JSON content
-        paper_data = json.loads(f"[{json_content}]")
-        
-        # Create a list to store Paper objects
-        parsed_papers = []
-        
-        for item in paper_data:
+    for item in paper_data:
+        try:
             # Create a Paper object for each item in the JSON
             paper = Paper(
                 title=item['title'],
+                summary=item.get('summary', ''),  # Use get() with default value
+                post=item.get('post', ''),
                 comment=item['comment'],
-                score=item['score']
+                score=item['score'],
+                argument=item.get('argument', '')
             )
             parsed_papers.append(paper)
-        
-        return parsed_papers
-    except json.JSONDecodeError:
-        print("Error: Invalid JSON format in the response")
-        return []
-    except KeyError as e:
-        print(f"Error: Missing key in JSON data: {e}")
-        return []
+        except KeyError as e:
+            print(f"Error: Missing key in JSON data: {e}")
+            # Continue processing other items even if one fails
+    
+    return parsed_papers
 
 # Json helper functions
 
