@@ -7,6 +7,7 @@ import arxiv
 import json
 import os
 import io
+import re
 
 oai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -100,3 +101,87 @@ def get_pdf_contents(pdf_file, first_page=1, last_page=1):
         pdf_base64_images.append(pdf_image_base64)
         
     return pdf_base64_images
+
+
+from typing import TypedDict, List
+
+class Paper(TypedDict):
+    title: str
+    summary: str
+    post: str
+    evaluation: str
+    
+def add_papers(left: List[Paper], right: List[Paper]) -> List[Paper]:
+    return left + right 
+    
+def initialize_papers(papers: list) -> list[Paper]:
+    paper_list = []
+    for paper in papers:
+        
+        paper_list.append(Paper(title=paper.get("title"), 
+                                summary=paper.get("summary"), 
+                                post=paper.get("post", ""), 
+                                comment=paper.get("comment", ""),
+                                score=paper.get("score", 0)))
+    return paper_list
+    
+def load_papers(refresh: bool = False, file_path: str = "cave/arxiv_papers_info.json") -> List[Paper]:
+    if refresh or not os.path.exists(file_path):
+        crawl_arxiv_papers()
+    papers = read_quick_info()
+    return initialize_papers(papers)
+
+def paper_to_string(paper: Paper) -> str:
+    return_str = ""
+    if paper.get('title'):
+        return_str += f"Title: {paper['title']}\n"
+    if paper.get('summary'):
+        return_str += f"Summary: {paper['summary']}\n"
+    if paper.get('post'):
+        return_str += f"Post: {paper['post']}\n"
+    if paper.get('comment'):
+        return_str += f"Comment: {paper['comment']}\n"
+    if paper.get('score') is not None:
+        return_str += f"Score: {paper['score']}\n"
+    return return_str.strip()
+    
+def papers_to_string(papers: List[Paper]) -> str:
+    return "\n\n".join([paper_to_string(paper) for paper in papers])
+
+
+def parse_paper_response(content: str) -> List[Paper]:
+    # Extract content inside square brackets
+    match = re.search(r'\[(.*?)\]', content, re.DOTALL)
+    if not match:
+        print("Error: No JSON array found in square brackets")
+        return []
+    
+    json_content = match.group(1)
+    
+    try:
+        # Parse the JSON content
+        paper_data = json.loads(f"[{json_content}]")
+        
+        # Create a list to store Paper objects
+        parsed_papers = []
+        
+        for item in paper_data:
+            # Create a Paper object for each item in the JSON
+            paper = Paper(
+                title=item['title'],
+                comment=item['comment'],
+                score=item['score']
+            )
+            parsed_papers.append(paper)
+        
+        return parsed_papers
+    except json.JSONDecodeError:
+        print("Error: Invalid JSON format in the response")
+        return []
+    except KeyError as e:
+        print(f"Error: Missing key in JSON data: {e}")
+        return []
+
+# Json helper functions
+
+
