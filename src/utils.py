@@ -122,7 +122,9 @@ def initialize_papers(papers: list) -> list[Paper]:
                                 summary=paper.get("summary"), 
                                 post=paper.get("post", ""), 
                                 comment=paper.get("comment", ""),
-                                score=paper.get("score", 0)))
+                                score=paper.get("score", 0),
+                                argument=paper.get("argument", "")
+                                ))
     return paper_list
     
 def load_papers(refresh: bool = False, file_path: str = "cave/arxiv_papers_info.json") -> List[Paper]:
@@ -143,6 +145,8 @@ def paper_to_string(paper: Paper) -> str:
         return_str += f"Comment: {paper['comment']}\n"
     if paper.get('score') is not None:
         return_str += f"Score: {paper['score']}\n"
+    if paper.get('argument') is not None:
+        return_str += f"Argument: {paper['argument']}\n"
     return return_str.strip()
     
 def papers_to_string(papers: List[Paper]) -> str:
