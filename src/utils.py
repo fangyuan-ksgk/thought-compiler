@@ -339,61 +339,6 @@ def summarize_human_preference(papers, model):
     return summary.content
 
 from typing import Callable
-
-class HumanApprovalNode:
-    def __init__(self, name: str, stop_count: int = 5, 
-                 get_action: Callable = lambda: input("Do you like this paper? (y/n/back): ").lower(), 
-                 get_reject_feedback: Callable = lambda: input("Please provide feedback for rejection: ")):
-        self.name = name
-        self.stop_count = stop_count
-        self.get_action = get_action
-        self.get_reject_feedback = get_reject_feedback
-        
-    def __call__(self, state: State):
-        """ 
-        Simple Version | We do a top-down approach, wait until human approves 5 papers before we proceed
-        """
-        possible_actions = ["y", "n", "back"]
-        
-        papers = state["papers"]
-        
-        papers.sort(key=lambda x: x['score'], reverse=True)
-        
-        print("Presenting Top Papers selected by AI")
-        approved_count = 0
-        for paper in papers:
-            print(f"Title: {paper['title']}")
-            print(f"Score: {paper['score']}")
-            print(f"AI Comment: {paper['comment']}")
-            
-            if approved_count >= self.stop_count:
-                continue
-             
-            while True:
-                action = self.get_action
-                if action in possible_actions:
-                    break
-                print("Invalid action. Please choose y, n, or back.")
-            
-            if action == "y":
-                paper['score'] = 999  # Indicate human approval
-                approved_count += 1
-            elif action == "n":
-                argument = self.get_reject_feedback
-                paper['argument'] = argument
-                paper["score"] = 0
-            elif action == "back":
-                print("--- Failed to recommend papers, reflecting on human preference ---")
-                infered_preference = summarize_human_preference(papers, model)
-                print(f"Summary of human preference: \n{infered_preference}")
-                print("--- End of summary ---")
-                
-                # AI should do analysis on human preference and do the ranking again
-                return {"messages": [{"role": "assistant", "content": "Please redo the paper selection process."},
-                                     {"role": "assistant", "content": f"Summary of human preference: {infered_preference}"}], 
-                        "papers": papers}
-        
-        return {"messages": [{"role": "assistant", "content": "Please proceed to the next step."}], "papers": papers}
     
     
 
@@ -423,3 +368,109 @@ def should_continue(state):
         return "redo"
     
     
+
+class HumanApprovalNode:
+    def __init__(self, name: str, stop_count: int = 5, 
+                get_action: Callable = lambda: input("Do you like this paper? (y/n/back): ").lower(), 
+                get_reject_feedback: Callable = lambda: input("Please provide feedback for rejection: "),
+                print_paper: Callable = lambda paper: print(f"Title: {paper['title']}\nScore: {paper['score']}\nAI Comment: {paper['comment']}"),
+                print_action_error: Callable = lambda: print("Invalid action. Please choose y, n, or back."),
+                print_summary_begin: Callable = lambda: print("--- Failed to recommend papers, reflecting on human preference ---"),
+                print_summary: Callable = lambda summary: print(f"Summary of human preference: \n{summary}")):
+        
+        self.name = name
+        self.stop_count = stop_count
+        self.get_action = get_action
+        self.get_reject_feedback = get_reject_feedback
+        self.print_paper = print_paper
+        self.print_action_error = print_action_error
+        self.print_summary_begin = print_summary_begin
+        self.print_summary = print_summary
+        
+    def __call__(self, state: State):
+        """ 
+        Simple Version | We do a top-down approach, wait until human approves 5 papers before we proceed
+        """
+        possible_actions = ["y", "n", "back"]
+        
+        papers = state["papers"]
+        
+        papers.sort(key=lambda x: x['score'], reverse=True)
+        
+        print("Presenting Top Papers selected by AI")
+        approved_count = 0
+        for paper in papers:
+            self.print_paper(paper)
+            
+            if approved_count >= self.stop_count:
+                continue
+             
+            while True:
+                action = self.get_action()
+                if action in possible_actions:
+                    break
+                self.print_action_error()
+            
+            if action == "y":
+                paper['score'] = 999  # Indicate human approval
+                approved_count += 1
+            elif action == "n":
+                argument = self.get_reject_feedback()
+                paper['argument'] = argument
+                paper["score"] = 0
+            elif action == "back":
+                self.print_summary_begin()
+                infered_preference = summarize_human_preference(papers, model)
+                self.print_summary(infered_preference)
+                
+                # AI should do analysis on human preference and do the ranking again
+                return {"messages": [{"role": "assistant", "content": "Please redo the paper selection process."},
+                                     {"role": "assistant", "content": f"Summary of human preference: {infered_preference}"}], 
+                        "papers": papers}
+        
+        return {"messages": [{"role": "assistant", "content": "Please proceed to the next step."}], "papers": papers}
+    
+def build_research_graph(
+    get_action: Callable = lambda: input("Do you like this paper? (y/n/back): ").lower(), 
+    get_reject_feedback: Callable = lambda: input("Please provide feedback for rejection: "),
+    print_paper: Callable = lambda paper: print(f"Title: {paper['title']}\nScore: {paper['score']}\nAI Comment: {paper['comment']}"),
+    print_action_error: Callable = lambda: print("Invalid action. Please choose y, n, or back."),
+    print_summary_begin: Callable = lambda: print("--- Failed to recommend papers, reflecting on human preference ---"),
+    print_summary: Callable = lambda summary: print(f"Summary of human preference: \n{summary}")):
+    """ 
+    1. Scrape ArXiv for newest 200 AI papers 
+    2. AI do ranking & analysis base on abstracts
+    3. Human select 5 papers from top-ranked papers
+    4. Conditional on human acceptance, proceed, otherwise, summarize human preference and go back to 2.
+    -- Output 5 papers & analysis
+    """
+    model = ChatOpenAI(model="gpt-4o")
+    builder = StateGraph(State)
+    
+    # Research graph part
+    research_entry_point = "crawl_arxiv_node"
+    builder.add_node(research_entry_point, CrawlNode(research_entry_point))
+    builder.add_edge(START, research_entry_point)
+    
+    builder = add_selection_nodes(builder, research_entry_point, "human_approval_node", model)
+    
+    # Human approval graph part
+    human_approval_node = "human_approval_node"
+    builder.add_node(human_approval_node, HumanApprovalNode(human_approval_node,
+                                                            get_action=get_action,
+                                                            get_reject_feedback=get_reject_feedback,
+                                                            print_paper=print_paper,
+                                                            print_action_error=print_action_error,
+                                                            print_summary_begin=print_summary_begin,
+                                                            print_summary=print_summary
+                                                            ))  # Assuming HumanApprovalNode is defined elsewhere
+    
+    # So here we ought to have a conditional edge, if there is "redo" in the message, we re-run from research_entry_point
+    builder.add_conditional_edges(human_approval_node, 
+                                  should_continue,
+                                  {
+                                    "continue": END,
+                                    "redo": research_entry_point,
+                                  },)
+        
+    return builder.compile()
