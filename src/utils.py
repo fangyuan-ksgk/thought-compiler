@@ -8,8 +8,16 @@ import json
 import os
 import io
 import re
+from langgraph.graph.message import add_messages
+import random
+from typing import Annotated, Literal
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+
 
 oai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+model = ChatOpenAI(model="gpt-4o")
 
 def get_last_dates(days=5):
     return [(datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
@@ -116,7 +124,7 @@ class Paper(TypedDict):
     post: str
     comment: str
     score: int
-    argument: str # Argument needs to be approved by a human
+    argument: str # Human feedback on the paper 
     
 def add_papers(left: List[Paper], right: List[Paper]) -> List[Paper]:
     # When there are duplicate titles, we merge, otherwise we concatenate
@@ -235,4 +243,183 @@ def parse_paper_response(content: str) -> List[Paper]:
 
 # Json helper functions
 
+SELECT_PAPER_PROMPT = """Here is a list of papers with their summaries. \n{paper_string}\nFor each paper, conduct an analysis, provide your comment on the contribution and limitations of the paper, as well as a score between 0 and 100 indicating its importance.
+Your response should be in a JSON format as a list of dictionaries. Each dictionary should have the following keys: title, comment, score. For example:
+[
+    {{
+        "title": "Paper Title 1",
+        "comment": "Comment on the importance and contribution of the paper",
+        "score": 80
+    }},
+    {{
+        "title": "Paper Title 2",
+        "comment": "Another comment on a different paper",
+        "score": 75
+    }}
+]
 
+Please provide your analysis for each paper in the list."""
+
+
+ARGUMENT_PROMPT = """Provide argument on why the paper {paper_title} is the best among the selected papers: {paper_string}"""
+
+
+class CrawlNode:
+    def __init__(self, name: str, refresh: bool = False):
+        self.name = name
+        self.path = "cave/arxiv_papers_info.json"
+        self.refresh = refresh
+    def __call__(self, state: State): # Wonderful, now it works (!) I am starting to like LangGraph now ...
+        list_of_papers = load_papers(refresh=self.refresh, file_path=self.path)
+        return {"papers": list_of_papers}
+    
+
+class SelectNode:
+    def __init__(self, name: str,batch_id: int, model: ChatOpenAI):
+        self.name = name
+        self.model = model
+        self.batch_id = batch_id
+
+    def __call__(self, state: State):
+        papers = state["papers"]
+        batch_size = 10
+
+        start_index = self.batch_id * batch_size
+        end_index = min((self.batch_id + 1) * batch_size, len(papers))
+
+        batch_papers = papers[start_index:end_index]
+        paper_string = papers_to_string(batch_papers)
+        select_prompt = SELECT_PAPER_PROMPT.format(paper_string=paper_string)
+
+        paper_response = []
+        max_tries = 3
+        cur_try = 0
+        while not paper_response and cur_try < max_tries:
+            response = self.model.invoke(select_prompt)
+            paper_response = parse_paper_response(response.content)
+            cur_try += 1
+        
+        if not paper_response:
+            return {"papers": batch_papers}
+        
+        processed_batch = initialize_papers(paper_response)
+        batch_papers = add_papers(batch_papers, processed_batch) 
+
+        # Update the state with the processed and verified papers
+        return {"papers": batch_papers}
+    
+# Understanding Human Preference 
+
+REFLECT_PROMPT = """Base on human feedback on AI papers, provide your understanding of his preference and how can you better select papers which he likes. 
+AI comment on paper: {summary}
+Human comment on paper: {feedback}
+Provide concise description within 200 words."""
+
+SUMMARIZE_PROMPT = """Please summarize the following information into a concise description within 200 words. 
+{reflection_str}"""
+
+# After Human Feedback is collected, we analyze and summarize their preference for future paper selection
+# Such understanding of his preference will be passed around over all the AI workers
+
+def summarize_human_preference(papers, model):
+    # now we are talking about customization (;->)
+    reflections = []
+    for paper in papers:
+        if not paper["argument"]:
+            continue 
+        feedback, summary = paper["argument"], paper["comment"] 
+        reflect_prompt = REFLECT_PROMPT.format(summary=summary, feedback=feedback)
+        reflection = model.invoke(reflect_prompt)
+        reflections.append(reflection)
+
+    reflection_str = ("\n").join([r.content for r in reflections])
+
+    summary_prompt = SUMMARIZE_PROMPT.format(reflection_str=reflection_str)
+    summary = model.invoke(summary_prompt)
+    return summary.content
+
+from typing import Callable
+
+class HumanApprovalNode:
+    def __init__(self, name: str, stop_count: int = 5, 
+                 get_action: Callable = lambda: input("Do you like this paper? (y/n/back): ").lower(), 
+                 get_reject_feedback: Callable = lambda: input("Please provide feedback for rejection: ")):
+        self.name = name
+        self.stop_count = stop_count
+        self.get_action = get_action
+        self.get_reject_feedback = get_reject_feedback
+        
+    def __call__(self, state: State):
+        """ 
+        Simple Version | We do a top-down approach, wait until human approves 5 papers before we proceed
+        """
+        possible_actions = ["y", "n", "back"]
+        
+        papers = state["papers"]
+        
+        papers.sort(key=lambda x: x['score'], reverse=True)
+        
+        print("Presenting Top Papers selected by AI")
+        approved_count = 0
+        for paper in papers:
+            print(f"Title: {paper['title']}")
+            print(f"Score: {paper['score']}")
+            print(f"AI Comment: {paper['comment']}")
+            
+            if approved_count >= self.stop_count:
+                continue
+             
+            while True:
+                action = self.get_action
+                if action in possible_actions:
+                    break
+                print("Invalid action. Please choose y, n, or back.")
+            
+            if action == "y":
+                paper['score'] = 999  # Indicate human approval
+                approved_count += 1
+            elif action == "n":
+                argument = self.get_reject_feedback
+                paper['argument'] = argument
+                paper["score"] = 0
+            elif action == "back":
+                print("--- Failed to recommend papers, reflecting on human preference ---")
+                infered_preference = summarize_human_preference(papers, model)
+                print(f"Summary of human preference: \n{infered_preference}")
+                print("--- End of summary ---")
+                
+                # AI should do analysis on human preference and do the ranking again
+                return {"messages": [{"role": "assistant", "content": "Please redo the paper selection process."},
+                                     {"role": "assistant", "content": f"Summary of human preference: {infered_preference}"}], 
+                        "papers": papers}
+        
+        return {"messages": [{"role": "assistant", "content": "Please proceed to the next step."}], "papers": papers}
+    
+    
+
+def add_selection_nodes(builder, current_node, next_node, model):
+
+    # Number of nodes to create at this level
+    node_names = [f"Paper_Batch_{i}" for i in range(5)]
+    for i, nm in enumerate(node_names):
+        node_name = f"Crawl_{nm}"
+        builder.add_node(node_name, SelectNode(node_name, i, model))
+        builder.add_edge(current_node, node_name)
+
+    # Connecting all branches back to the END node
+    for node_name in node_names:
+        crawl_node_name = f"Crawl_{node_name}"
+        builder.add_edge(crawl_node_name, next_node)
+        
+    return builder 
+
+
+def should_continue(state):
+    messages = state["messages"]
+    last_message = messages[-1].content
+    if "Please proceed" in last_message:
+        return "continue" 
+    else:
+        return "redo"
+    
+    

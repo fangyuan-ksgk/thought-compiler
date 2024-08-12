@@ -1,41 +1,84 @@
-import chainlit as cl
+import streamlit as st
+import time
 
-@cl.on_chat_start
-def on_chat_start():
-    print("Hello you losers! When you gonna publish!??")
-    
-@cl.set_starters
-async def set_starters():
+def mock_fetch_topics():
+    # Simulating API call to fetch trending topics
+    time.sleep(1.5)  # Simulate network delay
     return [
-        cl.Starter(
-            label="Morning routine ideation",
-            message="Can you help me create a personalized morning routine that would help increase my productivity throughout the day? Start by asking me about my current habits and what activities energize me in the morning.",
-            icon="/public/idea.svg",
-            ),
+        'The Impact of AI on Job Markets',
+        'Climate Change: Recent Developments',
+        'Advances in Quantum Computing',
+        'The Future of Remote Work',
+        'Blockchain Beyond Cryptocurrency'
+    ]
 
-        cl.Starter(
-            label="Explain superconductors",
-            message="Explain superconductors like I'm five years old.",
-            icon="/public/learn.svg",
-            ),
-        cl.Starter(
-            label="Python script for daily email reports",
-            message="Write a script to automate sending daily email reports in Python, and walk me through how I would set it up.",
-            icon="/public/terminal.svg",
-            ),
-        cl.Starter(
-            label="Text inviting friend to wedding",
-            message="Write a text asking a friend to be my plus-one at a wedding next month. I want to keep it super short and casual, and offer an out.",
-            icon="/public/write.svg",
-            )
-        ]
+def main():
+    st.title("Interactive Article Writer")
 
+    # Initialize session state variables
+    if 'step' not in st.session_state:
+        st.session_state.step = 0
+    if 'topics' not in st.session_state:
+        st.session_state.topics = []
+    if 'selected_topic' not in st.session_state:
+        st.session_state.selected_topic = None
 
-@cl.on_message
-async def main(message: cl.Message):
-    # Your custom logic goes here...
+    # Sidebar for progress tracking
+    with st.sidebar:
+        st.header("Progress")
+        steps = ['Research', 'Topic Selection', 'Writing', 'Review', 'Publish']
+        for i, step in enumerate(steps):
+            if i == st.session_state.step:
+                st.markdown(f"**{step}**")
+            else:
+                st.write(step)
 
-    # Send a response back to the user
-    await cl.Message(
-        content=f"Received: {message.content}",
-    ).send()
+    # Main content area
+    if st.session_state.step == 0:
+        st.header("Research")
+        st.write("AI is navigating the web to find trending topics...")
+        if st.button("Start Research"):
+            with st.spinner("Researching..."):
+                st.session_state.topics = mock_fetch_topics()
+            st.session_state.step = 1
+            st.experimental_rerun()
+
+    elif st.session_state.step == 1:
+        st.header("Topic Selection")
+        for topic in st.session_state.topics:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(topic)
+            with col2:
+                if st.button("Select", key=topic):
+                    st.session_state.selected_topic = topic
+                    st.session_state.step = 2
+                    st.experimental_rerun()
+
+    elif st.session_state.step == 2:
+        st.header("Writing")
+        st.write(f"AI is writing an article on: {st.session_state.selected_topic}")
+        if st.button("Review Draft"):
+            st.session_state.step = 3
+            st.experimental_rerun()
+
+    elif st.session_state.step == 3:
+        st.header("Review")
+        st.write("Please review the article and provide feedback:")
+        feedback = st.text_area("Your feedback")
+        if st.button("Submit Feedback"):
+            if feedback:
+                st.success("Feedback submitted successfully!")
+                st.session_state.step = 4
+                st.experimental_rerun()
+            else:
+                st.warning("Please provide feedback before submitting.")
+
+    elif st.session_state.step == 4:
+        st.header("Publish")
+        st.write("Your article is ready to be published!")
+        if st.button("Publish Article"):
+            st.success("Article published successfully!")
+
+if __name__ == "__main__":
+    main()
