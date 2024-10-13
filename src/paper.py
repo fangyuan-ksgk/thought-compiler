@@ -14,6 +14,9 @@ from PIL import Image
 import io
 import base64
 import os
+from .llm import VLLM
+from .prompt import EXTRACT_TAGS_PROMPT, EXTRACT_CITATIONS_PROMPT
+from .utils import parse_tags, parse_citations
 
  
 MAX_ATTEMPTS = 3
@@ -100,4 +103,37 @@ def extract_citations_and_tags(paper_path: str):
         attempts += 1
     
     return citations, tags, img
+
+
+def extract_citations_and_tags_batch(paper_paths: List[str], vllm: VLLM):
+    """ 
+    LLM-based citations and tags extraction
+    - use vLLM
+    - use 1st page txt for tags extraction
+    - use 5 pages starting from the first occurance of "References" for citations extraction
+    """
+
+    # Extract relevant Raw Materials
+    tag_txts, cite_txts, imgs = [], [], []
+    for paper_path in paper_paths:
+        texts, img = pdf_to_text_and_images(paper_path) # Page-Image and Text of each page of the paper
+        full_text = " ".join(texts)
+        tag_txt = texts[0]
+        cite_txt = "".join(texts[texts.index(next(t for t in texts if "References" in t)):texts.index(next(t for t in texts if "References" in t))+5])
+        tag_txts.append(tag_txt)
+        cite_txts.append(cite_txt)
+        imgs.append(img)
+        
+    # Batch Inference with vLLM
+    tag_prompts = [EXTRACT_TAGS_PROMPT + tag_txt for tag_txt in tag_txts]
+    cite_prompts = [EXTRACT_CITATIONS_PROMPT + cite_txt for cite_txt in cite_txts]
+    
+    tag_responses = vllm.generate(tag_prompts)
+    cite_responses = vllm.generate(cite_prompts)
+    tags = [parse_tags(response) for response in tag_responses]
+    citations = [parse_citations(response) for response in cite_responses]
+
+    return tags, citations, imgs
+
+
     

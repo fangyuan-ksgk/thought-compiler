@@ -91,4 +91,36 @@ def parse_citation_and_tags(response: str):
         tags = []
     return citations, tags
 
+def parse_citations(response: str):
+    try:
+        import re
+        match = re.match(r'```json\n(.*?)\n```', response, re.DOTALL)
+        if match:
+            result = json.loads(match.group(1))
+            citations = result.get("citations", [])
+            print(f"Extracted {len(citations)} citations.")
+            return citations
+        else:
+            print("Error: No JSON block found in the response.")
+            return []
+    except json.JSONDecodeError:
+        print("Error: Unable to parse JSON response.")
+        return []
+
+def parse_tags(response: str):
+    try:
+        import re
+        match = re.match(r'```json\n(.*?)\n```', response, re.DOTALL)
+        if match:
+            result = json.loads(match.group(1))
+            tags = result.get("tags", [])
+            print(f"Extracted {len(tags)} tags.")
+            return tags
+        else:
+            print("Error: No JSON block found in the response.")
+            return []
+    except json.JSONDecodeError:
+        print("Error: Unable to parse JSON response.")
+        return []
+
 

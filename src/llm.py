@@ -69,3 +69,89 @@ def get_openai_response(query: Union[str, List[str]], img: str = None, img_type:
         max_tokens=1024
     )
     return response.choices[0].message.content
+
+import torch
+from typing import Optional
+import os 
+from transformers import AutoTokenizer
+
+try:
+    from vllm import LLM, SamplingParams
+    class VLLM:
+        def __init__(
+            self,
+            name: str,
+            # gpu_ids: List[int] = [0, 1], # Assuming we have 2 GPUs here
+            download_dir: Optional[str] = None,
+            dtype: str = "auto",
+            gpu_memory_utilization: float = 0.85,
+            max_model_len: int = 4096,
+            merge: bool = False,
+            **kwargs,
+        ) -> None:
+            self.name: str = name
+            if merge:
+                os.environ["VLLM_ATTENTION_BACKEND"] = "FLASH_ATTN" # Use this for merged model
+            else:
+                # os.environ["VLLM_ATTENTION_BACKEND"] = "FLASHINFER" # Use this for baseline model | Gemma2 require this backend for inference
+                os.environ["VLLM_ATTENTION_BACKEND"] = "FLASH_ATTN" # Default to using llama3.1 70B (quantized version, of course)            
+            
+            available_gpus = list(range(torch.cuda.device_count()))
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, available_gpus))
+            
+            # if len(available_gpus) > 1:
+            #     import multiprocessing
+            #     multiprocessing.set_start_method('spawn', force=True)
+
+            self.model: LLM = LLM(
+                model=self.name,
+                tensor_parallel_size=len(available_gpus),
+                dtype=dtype,
+                gpu_memory_utilization=gpu_memory_utilization,
+                download_dir=download_dir,
+                max_model_len=max_model_len,
+            )
+            
+            self.params = SamplingParams(**kwargs)
+            
+            self.tokenizer = AutoTokenizer.from_pretrained(self.name)
+        
+        def completions(
+            self,
+            prompts: List[str],
+            use_tqdm: bool = False,
+            **kwargs: Union[int, float, str],
+        ) -> List[str]:
+            formatted_prompts = [self.format_query_prompt(prompt.strip()) for prompt in prompts]
+    
+            outputs = self.model.generate(formatted_prompts, self.params, use_tqdm=use_tqdm)
+            outputs = [output.outputs[0].text for output in outputs]
+            return outputs
+
+        def generate(
+            self,
+            prompts: List[str],
+            use_tqdm: bool = False,
+            **kwargs: Union[int, float, str],
+        ) -> List[str]:
+            formatted_prompts = [self.format_query_prompt(prompt.strip()) for prompt in prompts]
+            return self.model.generate(formatted_prompts, self.params, use_tqdm=use_tqdm)
+
+        def format_query_prompt(self, prompt: str, completion: str = "####Dummy-Answer") -> str:
+            messages = [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": completion}
+            ]
+            format_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+            query_prompt = format_prompt.split(completion)[0]
+            return query_prompt
+        
+except ImportError:
+    class VLLM:
+        def __init__(self, *args, **kwargs):
+            pass
+        def completions(self, *args, **kwargs):
+            return get_openai_response(*args, **kwargs)
+    
+    # Just write a dummy VLLM class for Mac instance here 
+    print("Could not load vllm class, check CUDA support and GPU RAM size")
