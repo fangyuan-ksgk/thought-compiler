@@ -123,4 +123,27 @@ def parse_tags(response: str):
         print("Error: Unable to parse JSON response.")
         return []
 
+import datetime
+
+def get_time_range(begin_date="2018-01-01", end_date="now", interval="7d"):
+    from datetime import datetime, timedelta
+    
+    end_date = datetime.now() if end_date == "now" else datetime.strptime(end_date, "%Y-%m-%d")
+    begin_date = datetime.strptime(begin_date, "%Y-%m-%d")
+    
+    interval_days = int(interval[:-1])
+    time_ranges = []
+    
+    current_start = begin_date
+    while current_start < end_date:
+        current_end = min(current_start + timedelta(days=interval_days), end_date)
+        
+        start_str = current_start.strftime("%Y-%m-%d%H%M%S")
+        end_str = current_end.strftime("%Y-%m-%d%H%M%S")
+        
+        time_ranges.append((start_str, end_str))
+        
+        current_start = current_end
+    
+    return time_ranges
 

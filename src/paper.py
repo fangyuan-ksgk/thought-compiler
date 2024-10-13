@@ -6,17 +6,13 @@ import datetime
 import json
 import numpy as np
 from dataclasses import dataclass, asdict
-from src.utils import pdf_to_text_and_images
-from src.llm import get_openai_response
-from src.prompt import EXTRACT_CITATIONS_AND_TAGS_PROMPT
-from src.utils import parse_citation_and_tags
+from .utils import *
 from PIL import Image
 import io
 import base64
 import os
-from .llm import VLLM
-from .prompt import EXTRACT_TAGS_PROMPT, EXTRACT_CITATIONS_PROMPT
-from .utils import parse_tags, parse_citations
+from .llm import *
+from .prompt import *
 
  
 MAX_ATTEMPTS = 3
@@ -59,6 +55,7 @@ class Paper:
         
         return cls(**data)
     
+    
 def get_paper_info(r: arxiv.arxiv.Result):
     paper_info = {
         "title": r.title,
@@ -78,7 +75,40 @@ def get_paper_info(r: arxiv.arxiv.Result):
     paper_info["img"] = img
     paper_info["pdf_path"] = paper_path
     return paper_info
-    
+
+def get_paper_info_batch(search_results: List[arxiv.arxiv.Result], vllm: VLLM):
+    os.makedirs("cave/paper", exist_ok=True)
+    paper_paths = []
+    paper_infos = []
+
+    # Download PDFs and prepare basic info
+    for r in tqdm(search_results, desc="Downloading PDFs"):
+        paper_path = r.download_pdf(dirpath="cave/paper/")
+        paper_paths.append(paper_path)
+        paper_infos.append({
+            "title": r.title,
+            "summary": r.summary,
+            "tags": [],
+            "citations": [],
+            "date": r.published.strftime("%Y-%m-%d"),
+            "img": None,
+            "pdf_path": paper_path
+        })
+
+    # Batch extract citations and tags
+    tags, citations, imgs = extract_citations_and_tags_batch(paper_paths, vllm)
+
+    # Update paper_infos with extracted data
+    for i, paper_info in enumerate(paper_infos):
+        paper_info["tags"].extend(tags[i])
+        paper_info["citations"] = citations[i]
+        paper_info["img"] = imgs[i]
+
+    # Clean up downloaded PDFs
+    for paper_path in paper_paths:
+        os.remove(paper_path)
+
+    return paper_infos
     
 def extract_citations_and_tags(paper_path: str):
     """ 
