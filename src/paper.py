@@ -4,47 +4,100 @@ from tqdm import tqdm
 import re
 import datetime
 import json
+import numpy as np
+from dataclasses import dataclass, asdict
+from src.utils import pdf_to_text_and_images
+from src.llm import get_openai_response
+from src.prompt import EXTRACT_CITATIONS_AND_TAGS_PROMPT
+from src.utils import parse_citation_and_tags
+from PIL import Image
+import io
+import base64
+import os
 
-def get_last_dates(days=5):
-    return [(datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+ 
+MAX_ATTEMPTS = 3
 
-def save_quick_info(quick_info, filename="cave/arxiv_papers_info.json"):
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(quick_info, f, ensure_ascii=False, indent=4)
-        
-        
-class Paper(TypedDict):
+@dataclass
+class Paper:
     title: str
     summary: str
-    post: str
-    comment: str
-    score: int
-    argument: str
     tags: List[str]
     citations: List[str]
+    date: str
+    img: np.ndarray
+    pdf_path: str
+
+    def save(self, output_dir: str):
+        
+        # Convert numpy array to base64 string
+        if isinstance(self.img, np.ndarray):
+            img_array = self.img
+            img = Image.fromarray(self.img)
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            self.img = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        with open(os.path.join(output_dir, f"{self.title}.json"), "w") as f:
+            json.dump(asdict(self), f)
+            
+        self.img = img_array
+        
+    @classmethod
+    def load(cls, path: str) -> 'Paper':
+        with open(path, "r") as f:
+            data = json.load(f)
+        
+        # Convert base64 string back to numpy array
+        if 'img' in data and isinstance(data['img'], str):
+            img_data = base64.b64decode(data['img'])
+            img = Image.open(io.BytesIO(img_data))
+            data['img'] = np.array(img)
+        
+        return cls(**data)
     
-def crawl_arxiv_papers(query="AI", max_results=200):
-    client = arxiv.Client()
-    search = arxiv.Search(
-        query=query,
-        max_results=max_results,
-        sort_by=arxiv.SortCriterion.SubmittedDate
-    )
+def get_paper_info(r: arxiv.arxiv.Result):
+    paper_info = {
+        "title": r.title,
+        "summary": r.summary,
+        "tags": [cat.lower() for cat in r.categories],
+        "citations": [], # TODO: get citations by parsing PDF 
+        "date": r.published.strftime("%Y-%m-%d"),
+        "img": None,
+        "pdf_path": None
+    }
+    os.makedirs("cave/paper", exist_ok=True)
+    paper_path = r.download_pdf(dirpath="cave/paper/")
+    citations, tags, img = extract_citations_and_tags(paper_path)
+    os.remove(paper_path)
+    paper_info["citations"] = citations
+    paper_info["tags"] = tags
+    paper_info["img"] = img
+    paper_info["pdf_path"] = paper_path
+    return paper_info
+    
+    
+def extract_citations_and_tags(paper_path: str):
+    """ 
+    LLM-based citations and tags extraction
+    """
 
-    quick_info = []
-    for r in tqdm(client.results(search), desc="Downloading Newest Arxiv Papers"):
-        paper_info = {
-            "title": r.title,
-            "summary": r.summary,
-            "tags": [cat.lower() for cat in r.categories],
-            "citations": extract_citations(r.summary)
-        }
-        quick_info.append(paper_info)
-        r.download_pdf(dirpath="cave/paper")
+    texts, img = pdf_to_text_and_images(paper_path) # Page-Image and Text of each page of the paper
+    full_text = " ".join(texts)
 
-    save_quick_info(quick_info)
-    print("ArXiv paper crawling completed!")
-
-def extract_citations(text):
-    citation_pattern = r'\[([^\]]+)\]'
-    return re.findall(citation_pattern, text)
+    has_result = False
+    attempts = 0
+    while not has_result and attempts < MAX_ATTEMPTS:
+        try:
+            response = get_openai_response(EXTRACT_CITATIONS_AND_TAGS_PROMPT + full_text, system_prompt="You are an AI assistant specialized in analyzing academic papers. Provide output in JSON format only.")
+            citations, tags = parse_citation_and_tags(response)
+            has_result = len(citations) > 0 and len(tags) > 0
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            print("Issue response: \n", response)
+            citations, tags = [], []
+            has_result = False
+        attempts += 1
+    
+    return citations, tags, img
+    
