@@ -1,6 +1,7 @@
 import anthropic
 from typing import Union, List
 from openai import OpenAI
+import os
 
 anthropic_client = anthropic.Anthropic()
 openai_client = OpenAI()
@@ -70,6 +71,26 @@ def get_openai_response(query: Union[str, List[str]], img: str = None, img_type:
     )
     return response.choices[0].message.content
 
+
+from groq import Groq
+
+groq_client = Groq(
+    api_key=os.environ.get("GROQ_API_KEY"),
+)
+
+def get_groq_response(prompt: str):
+    chat_completion = groq_client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="llama-3.2-3b-preview",
+    )
+
+    return chat_completion.choices[0].message.content
+
 import torch
 from typing import Optional
 import os 
@@ -132,6 +153,7 @@ try:
             self,
             prompts: List[str],
             use_tqdm: bool = False,
+            max_new_tokens: int = 2048,
             **kwargs: Union[int, float, str],
         ) -> List[str]:
             formatted_prompts = [self.format_query_prompt(prompt.strip()) for prompt in prompts]

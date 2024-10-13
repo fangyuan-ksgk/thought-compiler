@@ -1,7 +1,7 @@
 from pdf2image import convert_from_path
 import io
 from PIL import Image
-import fitz  # PyMuPDF
+# import fitz  # PyMuPDF
 import numpy as np
 from typing import List, Tuple
 import json
@@ -107,23 +107,28 @@ def parse_citations(response: str):
         print("Error: Unable to parse JSON response.")
         return []
 
-def parse_tags(response: str):
-    try:
-        import re
-        match = re.match(r'```json\n(.*?)\n```', response, re.DOTALL)
-        if match:
-            result = json.loads(match.group(1))
-            tags = result.get("tags", [])
-            print(f"Extracted {len(tags)} tags.")
+def parse_tags(response): 
+    import re
+    import json
+
+    # Extract JSON content from the response
+    match = re.search(r'\{.*\}', response, re.DOTALL)
+    if match:
+        json_content = match.group(0)
+        # Parse the JSON content
+        try:
+            parsed_data = json.loads(json_content)
+            tags = parsed_data.get("tags", [])
             return tags
-        else:
-            print("Error: No JSON block found in the response.")
+        except json.JSONDecodeError:
+            print("Error: Unable to parse JSON content.")
             return []
-    except json.JSONDecodeError:
-        print("Error: Unable to parse JSON response.")
+    else:
+        print("Error: No JSON content found in the response.")
         return []
 
 import datetime
+
 
 def get_time_range(begin_date="2018-01-01", end_date="now", interval="7d"):
     from datetime import datetime, timedelta
@@ -138,12 +143,11 @@ def get_time_range(begin_date="2018-01-01", end_date="now", interval="7d"):
     while current_start < end_date:
         current_end = min(current_start + timedelta(days=interval_days), end_date)
         
-        start_str = current_start.strftime("%Y-%m-%d%H%M%S")
-        end_str = current_end.strftime("%Y-%m-%d%H%M%S")
+        start_str = current_start.strftime("%Y%m%d")
+        end_str = current_end.strftime("%Y%m%d")
         
         time_ranges.append((start_str, end_str))
         
         current_start = current_end
     
     return time_ranges
-

@@ -1,0 +1,26 @@
+{
+    "title": "A case study of Generative AI in MSX Sales Copilot: Improving seller productivity with a real-time question-answering system for content recommendation",
+    "summary": "In this paper, we design a real-time question-answering system specifically\ntargeted for helping sellers get relevant material/documentation they can share\nlive with their customers or refer to during a call. Taking the Seismic content\nrepository as a relatively large scale example of a diverse dataset of sales\nmaterial, we demonstrate how LLM embeddings of sellers' queries can be matched\nwith the relevant content. We achieve this by engineering prompts in an\nelaborate fashion that makes use of the rich set of meta-features available for\ndocuments and sellers. Using a bi-encoder with cross-encoder re-ranker\narchitecture, we show how the solution returns the most relevant content\nrecommendations in just a few seconds even for large datasets. Our recommender\nsystem is deployed as an AML endpoint for real-time inferencing and has been\nintegrated into a Copilot interface that is now deployed in the production\nversion of the Dynamics CRM, known as MSX, used daily by Microsoft sellers.",
+    "tags": [
+        "question-answering",
+        "real-time system",
+        "natural language processing (NLP)",
+        "LLM embeddings",
+        "cross-encoder re-ranker",
+        "bi-encoder",
+        "recommender system",
+        "meta-features",
+        "sales material",
+        "content repository",
+        "text matching",
+        " rocords management",
+        "machine learning (ML)",
+        "real-time inference",
+        "deployment",
+        "production",
+        "CRM"
+    ],
+    "citations": [],
+    "date": "2024-01-04",
+    "pdf_path": ""
+}

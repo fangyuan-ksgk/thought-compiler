@@ -24,66 +24,63 @@ class Paper:
     tags: List[str]
     citations: List[str]
     date: str
-    img: np.ndarray
     pdf_path: str
 
-    def save(self, output_dir: str):
-        
-        # Convert numpy array to base64 string
-        if isinstance(self.img, np.ndarray):
-            img_array = self.img
-            img = Image.fromarray(self.img)
-            buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
-            self.img = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        
-        with open(os.path.join(output_dir, f"{self.title}.json"), "w") as f:
+    def save(self, output_dir: str, name: Optional[str] = None):
+        if name is None:
+            name = self.title
+        with open(os.path.join(output_dir, f"{name}.json"), "w") as f:
             json.dump(asdict(self), f)
-            
-        self.img = img_array
         
     @classmethod
     def load(cls, path: str) -> 'Paper':
         with open(path, "r") as f:
             data = json.load(f)
         
-        # Convert base64 string back to numpy array
-        if 'img' in data and isinstance(data['img'], str):
-            img_data = base64.b64decode(data['img'])
-            img = Image.open(io.BytesIO(img_data))
-            data['img'] = np.array(img)
-        
         return cls(**data)
-    
-    
-def get_paper_info(r: arxiv.arxiv.Result):
+
+from typing import Callable
+
+def get_paper_info_without_tags(r):
     paper_info = {
         "title": r.title,
         "summary": r.summary,
-        "tags": [cat.lower() for cat in r.categories],
+        "tags": [],
         "citations": [], # TODO: get citations by parsing PDF 
         "date": r.published.strftime("%Y-%m-%d"),
-        "img": None,
-        "pdf_path": None
+        "pdf_path": ""
     }
     os.makedirs("cave/paper", exist_ok=True)
-    paper_path = r.download_pdf(dirpath="cave/paper/")
-    citations, tags, img = extract_citations_and_tags(paper_path)
-    os.remove(paper_path)
-    paper_info["citations"] = citations
+    # tags = extract_tags(r.summary, get_llm_response)
+    # paper_info["tags"] = tags
+    return paper_info
+    
+def get_paper_info(r, get_llm_response: Callable):
+    paper_info = {
+        "title": r.title,
+        "summary": r.summary,
+        "tags": [],
+        "citations": [], # TODO: get citations by parsing PDF 
+        "date": r.published.strftime("%Y-%m-%d"),
+        "pdf_path": ""
+    }
+    os.makedirs("cave/paper", exist_ok=True)
+    tags = extract_tags(r.summary, get_llm_response)
     paper_info["tags"] = tags
-    paper_info["img"] = img
-    paper_info["pdf_path"] = paper_path
     return paper_info
 
-def get_paper_info_batch(search_results: List[arxiv.arxiv.Result], vllm: VLLM):
+
+def get_paper_info_batch(search_results: list, vllm: VLLM):
     os.makedirs("cave/paper", exist_ok=True)
     paper_paths = []
     paper_infos = []
 
     # Download PDFs and prepare basic info
     for r in tqdm(search_results, desc="Downloading PDFs"):
-        paper_path = r.download_pdf(dirpath="cave/paper/")
+        try:
+            paper_path = r.download_pdf(dirpath="cave/paper/")
+        except:
+            continue
         paper_paths.append(paper_path)
         paper_infos.append({
             "title": r.title,
@@ -109,6 +106,16 @@ def get_paper_info_batch(search_results: List[arxiv.arxiv.Result], vllm: VLLM):
         os.remove(paper_path)
 
     return paper_infos
+
+from typing import Callable
+
+def extract_tags(summary: str, get_llm_response: Callable):
+    try:
+        response = get_llm_response(EXTRACT_TAGS_PROMPT + summary, system_prompt="You are an AI assistant specialized in analyzing academic papers. Provide output in JSON format only.")
+        tags = parse_tags(response)
+    except Exception as e:
+        tags = []
+    return tags
     
 def extract_citations_and_tags(paper_path: str):
     """ 
@@ -158,12 +165,11 @@ def extract_citations_and_tags_batch(paper_paths: List[str], vllm: VLLM):
     tag_prompts = [EXTRACT_TAGS_PROMPT + tag_txt for tag_txt in tag_txts]
     cite_prompts = [EXTRACT_CITATIONS_PROMPT + cite_txt for cite_txt in cite_txts]
     
-    tag_responses = vllm.generate(tag_prompts)
-    cite_responses = vllm.generate(cite_prompts)
+    tag_responses = vllm.completions(tag_prompts, use_tqdm=True)
+    cite_responses = vllm.completions(cite_prompts, use_tqdm=True)
     tags = [parse_tags(response) for response in tag_responses]
     citations = [parse_citations(response) for response in cite_responses]
 
     return tags, citations, imgs
-
 
     
